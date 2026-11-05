@@ -255,7 +255,7 @@ let lastSeen = null;   // última escena vista (para «Ajustar»)
 const camWorld = new THREE.Vector3();
 const tmp = new THREE.Vector3();
 
-const modelReady = new GLTFLoader().loadAsync('assets/fray-guia.glb').then((g) => { gltf = g; return g; });
+const modelReady = new GLTFLoader().loadAsync('assets/fray-guia.glb?v=2').then((g) => { gltf = g; return g; });
 
 function shadowMesh() {
   const c = document.createElement('canvas'); c.width = c.height = 128;
@@ -625,7 +625,7 @@ async function start() {
     await modelReady;
     st.textContent = 'Abriendo la cámara…';
     mindar = new MindARThree({
-      container: $('#ar'), imageTargetSrc: 'assets/targets.mind', maxTrack: 1,
+      container: $('#ar'), imageTargetSrc: 'assets/targets.mind?v=2', maxTrack: 1,
       uiLoading: 'no', uiScanning: 'no', uiError: 'no',
       filterMinCF: 0.0001, filterBeta: 0.001, warmupTolerance: 4, missTolerance: 10,
     });
