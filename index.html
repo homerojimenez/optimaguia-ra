@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#0B0C0E">
+<title>OptimaGuía RA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;700;800&display=swap">
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+  "mindar-image-three": "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
+} }
+</script>
+</head>
+<body>
+  <div id="ar" aria-hidden="true"></div>
+  <div id="marks" class="marks"></div>
+
+  <!-- Barra superior -->
+  <header class="topbar" id="topbar" hidden>
+    <div class="row1">
+      <span class="seal" aria-hidden="true"><img src="assets/emblema.svg" alt=""></span>
+      <div class="ttl"><b id="scene-title">Busca un vinilo</b><small id="scene-sub">Visita en realidad aumentada</small></div>
+      <button class="ib" id="btn-adjust" type="button" aria-label="Ajustar posiciones">
+        <svg viewBox="0 0 24 24"><path d="M5 7h9M18 7h1M5 17h3M12 17h7"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+      </button>
+    </div>
+    <div class="segbar"><span class="segs" id="segs"></span><span class="cnt" id="cnt">0/3</span></div>
+  </header>
+
+  <!-- Pista cuando no hay vinilo a la vista -->
+  <div class="hint" id="hint" hidden>
+    <b id="hint-title">Apunta a un vinilo de la pared</b>
+    <div class="thumbs" id="hint-thumbs"></div>
+    <small id="hint-sub">Ponte a unos 2 o 3 metros, con el vinilo entero en la pantalla.</small>
+  </div>
+
+  <!-- Lo que dice el guía -->
+  <div class="bubble" id="bubble" hidden>
+    <div class="who"><i></i>El guía</div>
+    <p id="line"></p>
+  </div>
+
+  <!-- Barra inferior -->
+  <nav class="dock" id="dock" hidden>
+    <button class="d" id="btn-pause" type="button" aria-label="Pausar"><span class="pp"><svg viewBox="0 0 24 24" class="fill" id="ico-pause"><rect x="6.5" y="5" width="3.8" height="14" rx="1.2"/><rect x="13.7" y="5" width="3.8" height="14" rx="1.2"/></svg></span></button>
+    <button class="d" id="btn-repeat" type="button"><svg viewBox="0 0 24 24"><path d="M5 12a7 7 0 1 0 2.1-5"/><path d="M4.8 3.6v3.6h3.6"/></svg>Repetir</button>
+    <button class="talk" id="btn-talk" type="button"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11.5" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>Habla con el guía</button>
+  </nav>
+
+  <!-- Ficha de un punto -->
+  <section class="sheet" id="card" hidden aria-labelledby="card-title">
+    <figure class="card-photo"><img id="card-img" alt=""><button class="x" id="card-x" type="button" aria-label="Cerrar"><svg viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button></figure>
+    <div class="card-body">
+      <div class="over" id="card-over">Punto</div>
+      <h2 id="card-title"></h2>
+      <p id="card-text"></p>
+      <button class="btn primary" id="card-explain" type="button">Que el guía lo explique</button>
+    </div>
+  </section>
+
+  <!-- Hablar con el guía -->
+  <section class="sheet talk-sheet" id="talk" hidden aria-labelledby="talk-state">
+    <div class="grab"></div>
+    <div class="talk-top"><span class="lis" id="talk-state"><span class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>Te escucho</span><button class="x2" id="talk-x" type="button" aria-label="Cerrar"><svg viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button></div>
+    <p class="you" id="you">Pregúntale lo que quieras sobre la oficina.</p>
+    <div class="sugg-l">También puedes preguntarle</div>
+    <div class="sugg" id="sugg"></div>
+    <form class="ask" id="ask-form"><input id="ask-input" type="text" placeholder="O escribe tu pregunta" autocomplete="off" enterkeyhint="send"><button type="submit" aria-label="Enviar"><svg viewBox="0 0 24 24"><path d="M5 12h14M13.5 6.5 19 12l-5.5 5.5"/></svg></button></form>
+  </section>
+
+  <!-- Ajustes de posición -->
+  <section class="sheet adjust" id="adjust" hidden aria-labelledby="adj-title">
+    <div class="adj-top"><h2 id="adj-title">Ajustar posiciones</h2><button class="x2" id="adj-x" type="button" aria-label="Cerrar"><svg viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button></div>
+    <p class="adj-help" id="adj-help">Apunta a un vinilo y mueve el guía o los puntos hasta que encajen con la sala. Las medidas son en metros desde el centro del vinilo.</p>
+    <div class="seg" id="adj-what"></div>
+    <div id="adj-sliders"></div>
+    <div class="adj-btns"><button class="btn second" id="adj-reset" type="button">Restablecer</button><button class="btn primary" id="adj-copy" type="button">Copiar ajustes</button></div>
+    <button class="link" id="btn-keys-2" type="button">Voz e IA</button>
+  </section>
+
+  <!-- Voz e IA: las claves se pegan aquí y se guardan solo en este móvil -->
+  <section class="sheet keys" id="keys" hidden aria-labelledby="keys-title">
+    <div class="adj-top"><h2 id="keys-title">Voz e IA</h2><button class="x2" id="keys-x" type="button" aria-label="Cerrar"><svg viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button></div>
+    <p class="adj-help">Las claves se guardan solo en este móvil. No las pegues en el chat ni en el código: esta página es pública. Sin claves, el guía usa la voz del móvil y respuestas preparadas.</p>
+    <form id="keys-form" autocomplete="off">
+      <label class="fl" for="k-anthropic">Clave de Claude<small>Para responder en tiempo real lo que le preguntes</small></label>
+      <input class="tf" id="k-anthropic" type="password" placeholder="sk-ant-…" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <label class="fl" for="k-eleven">Clave de ElevenLabs<small>Para la voz del guía</small></label>
+      <input class="tf" id="k-eleven" type="password" placeholder="sk_…" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <label class="fl" for="k-voice">Voz de ElevenLabs<small>Por defecto, «Nico» (guía de museo)</small></label>
+      <input class="tf" id="k-voice" type="text" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <p class="kst" id="keys-status"></p>
+      <div class="adj-btns"><button class="btn second" id="keys-test" type="button">Probar voz</button><button class="btn primary" type="submit">Guardar</button></div>
+      <button class="link danger" id="keys-clear" type="button">Borrar las claves de este móvil</button>
+    </form>
+  </section>
+
+  <!-- Portada -->
+  <main class="start" id="start">
+    <div class="start-in">
+      <span class="seal big" aria-hidden="true"><img src="assets/emblema.svg" alt=""></span>
+      <div class="over">OptimaGuía · prototipo de RA</div>
+      <h1>El guía, en la oficina de Madrid</h1>
+      <p>Apunta con el móvil a uno de estos tres vinilos y el guía aparecerá a tu lado para explicarte esa zona.</p>
+      <div class="start-thumbs" id="start-thumbs"></div>
+      <ul class="tips">
+        <li>Sube el volumen: el guía habla.</li>
+        <li>Ponte a unos 2 o 3 metros del vinilo, con buena luz.</li>
+      </ul>
+      <button class="btn primary wide" id="btn-start" type="button">Empezar</button>
+      <button class="link" id="btn-keys" type="button">Voz e IA<span id="start-keys-status"></span></button>
+      <p class="status" id="start-status" role="status"></p>
+    </div>
+  </main>
+
+  <div class="toast" id="toast" hidden role="status"></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
