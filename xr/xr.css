@@ -1,0 +1,55 @@
+/* Versión con seguimiento espacial: mismos componentes que la de vinilos (../style.css), más lo propio de WebXR. */
+
+/* La capa DOM de WebXR tiene que ser transparente para que se vea la cámara */
+#overlay { position: fixed; inset: 0; z-index: 5; background: transparent; pointer-events: none; }
+#overlay .ui, #overlay .mk { pointer-events: auto; }
+#gl { position: fixed; inset: 0; }
+#gl canvas { display: block; touch-action: none; }
+body.in-xr { background: transparent; }
+body.in-xr #gl { display: none; }
+
+/* La barra superior lleva dos botones */
+.topbar .ib + .ib { margin-left: 2px; }
+
+/* Indicación inferior */
+.chip { position: fixed; left: var(--sl); right: var(--sr); bottom: calc(var(--sb) + 100px); z-index: 7; background: var(--band); border-radius: 20px; padding: 14px 16px; text-align: center; }
+.chip b { display: block; font-size: 18px; font-weight: 800; text-wrap: balance; }
+.chip small { display: block; font-size: 15px; color: var(--ink-2); margin-top: 6px; text-wrap: pretty; }
+.chip small:empty { display: none; }
+.chip .thumbs { margin-top: 10px; }
+.chip .thumbs:empty { display: none; }
+.chip .thumbs img { aspect-ratio: 3 / 2; }
+.chip-btns { display: flex; gap: 10px; margin-top: 14px; }
+.chip-btns .btn { flex: 1; }
+.chip-btns .btn:disabled { opacity: .45; }
+.chip.placing { bottom: calc(var(--sb) + 14px); }
+
+/* Bocadillo: enlace a la ficha */
+.bubble .more { margin-top: 8px; min-height: 44px; padding: 0 14px; border-radius: 999px; border: 0; background: var(--fill); color: #fff; font-size: 15px; font-weight: 700; }
+
+/* Marcas de los puntos */
+.mk .lbl small { margin-left: 8px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.mk.seen .ring::after { background: var(--ink-3); }
+.mk.far .lbl { display: none; }
+.mk.pointed .lbl { background: #fff; color: #111; }
+
+/* Lista de zonas para colocarlas a mano */
+.zone-list { border-top: 1px solid var(--line); margin-top: 6px; }
+.zone-list button { width: 100%; min-height: 76px; border: 0; border-bottom: 1px solid var(--line); background: none; display: flex; align-items: center; gap: 12px; text-align: left; padding: 8px 0; }
+.zone-list img { width: 84px; aspect-ratio: 3 / 2; object-fit: cover; border-radius: 8px; background: #fff; flex: none; }
+.zone-list b { display: block; font-size: 17px; }
+.zone-list small { display: block; font-size: 14px; color: var(--ink-2); }
+.zone-list .st { margin-left: auto; font-size: 14px; font-weight: 700; color: var(--ink-2); white-space: nowrap; }
+.zone-list .st.ok { color: #fff; }
+
+/* Hoja de hablar: el estado es un botón (tocar para volver a escuchar) */
+.lis { border: 0; background: none; padding: 0; min-height: 44px; text-align: left; }
+.talk-sheet.thinking .wave i { animation: wv 1.4s ease-in-out infinite; opacity: .6; }
+
+/* Portada */
+.start a.btn { text-decoration: none; }
+.start .link { text-align: center; }
+
+/* Sobre la cámara, la barra superior va en franja sólida: las paredes claras se comían el texto */
+#overlay .topbar { background: var(--band); padding-bottom: 12px; }
+#overlay .debug { top: calc(var(--st) + 128px); bottom: auto; right: 8px; white-space: pre-wrap; }

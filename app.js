@@ -5,6 +5,7 @@ import { MindARThree } from 'mindar-image-three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import * as voz from './voz.js';
 
 const $ = (s) => document.querySelector(s);
 const DEBUG = new URLSearchParams(location.search).has('debug');
@@ -110,137 +111,14 @@ function toast(msg, ms = 3000) { const t = $('#toast'); t.textContent = msg; t.h
 const localPoint = (sc, p) => new THREE.Vector3(p.x / sc.vinyl.widthM, (p.y - sc.vinyl.centerM) / sc.vinyl.widthM, p.z / sc.vinyl.widthM);
 
 // ---------------------------------------------------------------------------
-// Claves de voz e IA. Las pega Homero en el panel «Voz e IA» y se guardan solo en este navegador.
-// Nunca van en el código: este sitio es público.
+// Voz y preguntas: van por el servidor de Cloudflare (voz.js), que es quien guarda las claves.
+// Sin servidor, voz del móvil y respuestas preparadas.
 // ---------------------------------------------------------------------------
-const KEYS_LS = 'og-ra-claves-v1';
-const DEFAULT_VOICE = 'FXn3GKRRt9FCEyTbrkaL'; // «Nico», ElevenLabs: guía de museo, cálida y tranquila
-let keys = { anthropic: '', eleven: '', voice: DEFAULT_VOICE };
-try { keys = { ...keys, ...(JSON.parse(localStorage.getItem(KEYS_LS)) || {}) }; } catch (e) { /* sin almacenamiento */ }
-if (!keys.voice) keys.voice = DEFAULT_VOICE;
-function saveKeys() { try { localStorage.setItem(KEYS_LS, JSON.stringify(keys)); return true; } catch (e) { return false; } }
-
-// ---------------------------------------------------------------------------
-// Voz: ElevenLabs (frase a frase, con caché) y, si falla o no hay clave, la voz del sistema
-// ---------------------------------------------------------------------------
-let sysVoice = null;
-function pickVoice() {
-  if (!('speechSynthesis' in window)) return;
-  const vs = speechSynthesis.getVoices();
-  sysVoice = vs.find((v) => /es[-_]ES/i.test(v.lang) && /m[oó]nica|jorge|marisol|siri/i.test(v.name)) || vs.find((v) => /es[-_]ES/i.test(v.lang)) || vs.find((v) => /^es/i.test(v.lang)) || null;
-}
-if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
-const audioEl = new Audio(); audioEl.setAttribute('playsinline', ''); audioEl.preload = 'auto';
-const ttsCache = new Map();   // texto -> Promise<url>
-let pendingStop = null;       // corta lo que esté sonando
-function ttsUrl(text) {
-  if (!keys.eleven) return null;
-  if (ttsCache.has(text)) return ttsCache.get(text);
-  const pr = fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(keys.voice || DEFAULT_VOICE)}/stream?output_format=mp3_44100_128`, {
-    method: 'POST',
-    headers: { 'xi-api-key': keys.eleven, 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
-    body: JSON.stringify({ text, model_id: 'eleven_flash_v2_5', language_code: 'es', voice_settings: { stability: 0.5, similarity_boost: 0.8, style: 0.15, use_speaker_boost: true } }),
-  }).then(async (r) => {
-    if (!r.ok) { const t = await r.text().catch(() => ''); throw new Error(`ElevenLabs ${r.status} ${t.slice(0, 160)}`); }
-    return URL.createObjectURL(await r.blob());
-  });
-  pr.catch(() => ttsCache.delete(text));
-  ttsCache.set(text, pr);
-  return pr;
-}
-let ttsWarned = false;
-function playUrl(url) {
-  return new Promise((res) => {
-    let done = false; const fin = () => { if (!done) { done = true; pendingStop = null; res(); } };
-    pendingStop = () => { audioEl.pause(); fin(); };
-    audioEl.onended = fin; audioEl.onerror = fin;
-    audioEl.src = url; audioEl.play().catch(fin);
-  });
-}
-function speakSystem(text) {
-  return new Promise((res) => {
-    if (!('speechSynthesis' in window)) { setTimeout(res, 900 + text.length * 55); return; }
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = 'es-ES'; if (sysVoice) u.voice = sysVoice; u.rate = 1.0;
-    let done = false; const fin = () => { if (!done) { done = true; clearTimeout(t); pendingStop = null; res(); } };
-    pendingStop = () => { speechSynthesis.cancel(); fin(); };
-    u.onend = fin; u.onerror = fin;
-    const t = setTimeout(fin, 2500 + text.length * 95);
-    speechSynthesis.speak(u);
-  });
-}
-async function speak(text) {
-  const pr = ttsUrl(text);
-  if (pr) {
-    try { const url = await pr; return await playUrl(url); }
-    catch (e) { console.warn(e); if (!ttsWarned) { ttsWarned = true; toast('ElevenLabs no responde. Sigo con la voz del móvil.'); } }
-  }
-  return speakSystem(text);
-}
-function hush() { if (pendingStop) pendingStop(); audioEl.pause(); if ('speechSynthesis' in window) speechSynthesis.cancel(); }
-function unlockAudio() {
-  // iOS solo deja sonar audio después de un toque: se desbloquean aquí las dos vías.
-  if ('speechSynthesis' in window) { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); }
-  const sr = 8000, n = 800, b = new ArrayBuffer(44 + n * 2), v = new DataView(b);
-  const w = (o, str) => [...str].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
-  w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
-  v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true);
-  audioEl.src = URL.createObjectURL(new Blob([b], { type: 'audio/wav' })); audioEl.play().catch(() => {});
-}
-
-// ---------------------------------------------------------------------------
-// Respuestas en tiempo real con Claude (SDK oficial en el navegador, con la clave de este móvil)
-// ---------------------------------------------------------------------------
-let AnthropicSDK = null, claude = null, claudeKey = '';
-async function getClaude() {
-  if (!keys.anthropic) return null;
-  if (!AnthropicSDK) AnthropicSDK = (await import('https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.1.0/+esm')).default;
-  if (!claude || claudeKey !== keys.anthropic) { claude = new AnthropicSDK({ apiKey: keys.anthropic, dangerouslyAllowBrowser: true }); claudeKey = keys.anthropic; }
-  return claude;
-}
-const SYSTEM_PROMPT = [
-  'Eres el guía de OptimaGuía: un fraile de la Orden Hospitalaria de San Juan de Dios que acompaña al visitante en realidad aumentada.',
-  'Hoy es una prueba en la oficina de Óptima Cultura en Madrid, antes de llevar la audioguía a la basílica de San Juan de Dios de Granada.',
-  'Responde solo con la información de esta visita, que tienes abajo. Si te preguntan algo que no está, dilo con amabilidad en una frase y ofrece lo que sí sabes. No inventes datos, fechas ni nombres.',
-  'Hablas en voz alta: español de España, cercano y tranquilo, de una a tres frases cortas. Sin listas, sin markdown, sin emojis, sin comillas raras.',
-  'Responde enseguida, sin preámbulos: la respuesta se convierte en voz mientras la escribes.',
-  '',
-  'Información de la visita:',
-  '- Zona 1, «Bienvenida»: el vinilo «more soul, more beauty, more culture», junto al rincón del sofá. Es el lema de Óptima Cultura: más alma, más belleza, más cultura. El rincón del sofá está junto a la pared de pizarra, con una alfombra naranja; es un buen sitio para esperar.',
-  '- Zona 2, «La planta»: el vinilo «meetings that matter… or maybe this could’ve just been an email», en la sala de reuniones. Allí hay una planta muy bonita.',
-  '- Zona 3, «El café»: el vinilo «not cultured yet?», en la zona del café. La cafetera hace un café muy rico.',
-  '- Orden recomendado: bienvenida, sala de reuniones y café. Para que aparezcas, el visitante apunta con el móvil a cada vinilo.',
-  '- La basílica de San Juan de Dios está en Granada; esta prueba es para su audioguía. No tienes más datos de la basílica en esta prueba.',
-].join('\n');
-let convo = [];  // conversación de esta sesión, sin recortar (solo se añade)
-async function askClaude(q, A, onSentence, onText) {
-  const client = await getClaude(); if (!client) return null;
-  if (convo.length > 24) convo = [];
-  const where = A ? `El visitante está ahora en la zona «${A.sc.title}».` : 'El visitante no está apuntando a ningún vinilo ahora mismo.';
-  const messages = [...convo, { role: 'user', content: `${where}\n\nPregunta: ${q}` }];
-  const stream = client.beta.messages.stream({
-    model: 'claude-opus-5-5',
-    max_tokens: 2048,
-    betas: ['server-side-fallback-2026-07-01'],
-    fallbacks: 'default',
-    output_config: { effort: 'low' },
-    system: SYSTEM_PROMPT,
-    messages,
-  });
-  let full = '', buf = '';
-  for await (const ev of stream) {
-    if (ev.type === 'content_block_delta' && ev.delta.type === 'text_delta') {
-      full += ev.delta.text; buf += ev.delta.text; onText(full);
-      let m;
-      while ((m = buf.match(/^([\s\S]*?[.!?…])(\s+)/)) && m[1].trim().length >= 12) { onSentence(m[1].trim()); buf = buf.slice(m[0].length); }
-    }
-  }
-  const msg = await stream.finalMessage();
-  if (msg.stop_reason === 'refusal') return { refused: true };
-  if (buf.trim()) onSentence(buf.trim());
-  convo.push(messages[messages.length - 1], { role: 'assistant', content: msg.content });
-  return { text: full };
-}
+const warnVoice = () => toast('La voz de ElevenLabs no responde. Sigo con la voz del móvil.');
+const speak = (text) => voz.speak(text, { onFallback: warnVoice });
+const ttsUrl = (text) => voz.prefetch(text);
+const hush = () => voz.hush();
+const unlockAudio = () => voz.unlockAudio();
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 // ---------------------------------------------------------------------------
@@ -496,7 +374,7 @@ async function answer(q) {
   if (A) { A.focus = null; setPointed(A, null); A.speaking = true; play(A, 'Talk'); }
   const alive = () => !A || run === A.run;
   let usedClaude = false;
-  if (keys.anthropic) {
+  if (voz.hasServer()) {
     showBubble('…');
     // La voz va frase a frase: cada frase se pide a ElevenLabs en cuanto llega y suena en orden.
     const queue = []; let closed = false, wake = null;
@@ -510,12 +388,13 @@ async function answer(q) {
       }
     })();
     try {
-      const r = await askClaude(q, A, (sentence) => { ttsUrl(sentence); queue.push(sentence); if (wake) { const w = wake; wake = null; w(); } }, (txt) => { if (alive()) showBubble(txt); });
+      const r = await voz.ask(q, { zone: A ? A.sc.title : '', onSentence: (sentence) => { ttsUrl(sentence); queue.push(sentence); if (wake) { const w = wake; wake = null; w(); } }, onText: (txt) => { if (alive() && txt) showBubble(txt); } });
       if (r && r.refused) { queue.push('Prefiero no responder a eso. Pregúntame por la visita.'); showBubble('Prefiero no responder a eso. Pregúntame por la visita.'); }
-      usedClaude = !!r;
+      usedClaude = !!r || queue.length > 0;
     } catch (e) {
       console.warn(e);
-      toast(/401|authentication|api.key/i.test(String(e && e.message)) ? 'La clave de Claude no es válida. Uso las respuestas preparadas.' : 'Claude no responde ahora. Uso las respuestas preparadas.', 4000);
+      usedClaude = queue.length > 0;
+      if (!usedClaude) toast('Ahora no puedo pensar la respuesta. Uso las respuestas preparadas.', 4000);
     }
     closed = true; if (wake) { const w = wake; wake = null; w(); }
     await player;
@@ -567,38 +446,8 @@ $('#adj-copy').addEventListener('click', async () => {
   catch (e) { toast('No he podido copiar. Haz una captura de esta pantalla.'); }
 });
 
-// Panel «Voz e IA»: las claves se pegan aquí, en el móvil
-function keyStatus() {
-  const v = keys.eleven ? 'Voz: ElevenLabs' : 'Voz: la del móvil';
-  const ia = keys.anthropic ? 'Respuestas: Claude en tiempo real' : 'Respuestas: preparadas';
-  return `${v} · ${ia}`;
-}
-function renderKeyStatus() { const t = keyStatus(); $('#keys-status').textContent = t; $('#start-keys-status').textContent = t; }
-function openKeys() {
-  $('#k-anthropic').value = keys.anthropic; $('#k-eleven').value = keys.eleven; $('#k-voice').value = keys.voice || DEFAULT_VOICE;
-  renderKeyStatus(); $('#keys').hidden = false; $('#dock').hidden = true;
-}
-function closeKeys() { $('#keys').hidden = true; if ($('#start').hidden) $('#dock').hidden = false; }
-$('#btn-keys').addEventListener('click', openKeys);
-$('#btn-keys-2').addEventListener('click', () => { $('#adjust').hidden = true; $('#btn-adjust').classList.remove('on'); openKeys(); });
-$('#keys-x').addEventListener('click', closeKeys);
-$('#keys-form').addEventListener('submit', (e) => {
-  e.preventDefault();
-  keys.anthropic = $('#k-anthropic').value.trim(); keys.eleven = $('#k-eleven').value.trim(); keys.voice = $('#k-voice').value.trim() || DEFAULT_VOICE;
-  ttsCache.clear(); claude = null; convo = []; ttsWarned = false;
-  toast(saveKeys() ? 'Guardado en este móvil.' : 'No se ha podido guardar: el navegador no deja. Durará hasta que cierres la página.');
-  renderKeyStatus();
-});
-$('#keys-clear').addEventListener('click', () => {
-  keys = { anthropic: '', eleven: '', voice: DEFAULT_VOICE }; saveKeys(); ttsCache.clear(); claude = null; convo = [];
-  $('#k-anthropic').value = ''; $('#k-eleven').value = ''; $('#k-voice').value = DEFAULT_VOICE; renderKeyStatus(); toast('Claves borradas de este móvil.');
-});
-$('#keys-test').addEventListener('click', async () => {
-  unlockAudio(); await wait(150);
-  keys.eleven = $('#k-eleven').value.trim(); keys.voice = $('#k-voice').value.trim() || DEFAULT_VOICE; ttsCache.clear(); ttsWarned = false;
-  await speak('Hola, soy tu guía. Así sonará mi voz durante la visita.');
-});
-renderKeyStatus();
+// Estado de la voz en la portada
+$('#start-keys-status').textContent = voz.hasServer() ? 'Voz de ElevenLabs y respuestas de Claude, por el servidor' : 'Sin servidor: voz del móvil y respuestas preparadas';
 
 // ---------------------------------------------------------------------------
 // Arranque
@@ -619,7 +468,7 @@ async function start() {
   const st = $('#start-status'); const btn = $('#btn-start');
   btn.disabled = true; st.className = 'status';
   unlockAudio();
-  if (keys.eleven) ttsUrl(SCENES[0].lines[0].text);
+  ttsUrl(SCENES[0].lines[0].text);
   try {
     st.textContent = 'Cargando el guía…';
     await modelReady;

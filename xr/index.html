@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#0B0C0E">
+<title>OptimaGuía RA espacial</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;700;800&display=swap">
+<link rel="stylesheet" href="../style.css">
+<link rel="stylesheet" href="xr.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+  <div id="gl" aria-hidden="true"></div>
+
+  <!-- Todo lo que se ve encima de la cámara durante la RA (capa DOM de WebXR) -->
+  <div id="overlay" class="ov" hidden>
+    <header class="topbar ui" id="topbar">
+      <div class="row1">
+        <span class="seal" aria-hidden="true"><img src="../assets/emblema.svg" alt=""></span>
+        <div class="ttl"><b id="title">Visita por la oficina</b><small id="sub">Busca un vinilo</small></div>
+        <button class="ib" id="btn-place" type="button" aria-label="Colocar una zona a mano">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="2.2"/><path d="M12 1.8v3M12 19.2v3M1.8 12h3M19.2 12h3"/></svg>
+        </button>
+        <button class="ib" id="btn-exit" type="button" aria-label="Salir de la RA">
+          <svg viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg>
+        </button>
+      </div>
+      <div class="segbar"><span class="segs" id="segs"></span><span class="cnt" id="cnt">0/6</span></div>
+    </header>
+
+    <div id="marks" class="marks"></div>
+
+    <!-- Indicación de lo siguiente que hay que hacer -->
+    <div class="chip ui" id="chip" hidden>
+      <b id="chip-t"></b>
+      <small id="chip-s"></small>
+      <div class="thumbs" id="chip-thumbs"></div>
+      <div class="chip-btns" id="chip-btns" hidden>
+        <button class="btn second" id="chip-cancel" type="button">Cancelar</button>
+        <button class="btn primary" id="chip-here" type="button" disabled>Aquí</button>
+      </div>
+    </div>
+
+    <!-- Lo que dice el guía -->
+    <div class="bubble ui" id="bubble" hidden>
+      <div class="who"><i></i>El guía</div>
+      <p id="line"></p>
+      <button class="more" id="bubble-more" type="button" hidden>Ver foto</button>
+    </div>
+
+    <nav class="dock ui" id="dock">
+      <button class="d" id="btn-call" type="button"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.3"/><path d="M12 8.5v6.5M12 15l-3 6M12 15l3 6M7.5 11.5l4.5-3 4.5 3"/></svg>Llamar</button>
+      <button class="d" id="btn-repeat" type="button"><svg viewBox="0 0 24 24"><path d="M5 12a7 7 0 1 0 2.1-5"/><path d="M4.8 3.6v3.6h3.6"/></svg>Repetir</button>
+      <button class="talk" id="btn-talk" type="button"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11.5" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>Habla con el guía</button>
+    </nav>
+
+    <!-- Ficha de un punto -->
+    <section class="sheet ui" id="card" hidden aria-labelledby="card-title">
+      <figure class="card-photo"><img id="card-img" alt=""><button class="x" id="card-x" type="button" aria-label="Cerrar"><svg viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button></figure>
+      <div class="card-body">
+        <div class="over" id="card-over"></div>
+        <h2 id="card-title"></h2>
+        <p id="card-text"></p>
+        <button class="btn primary" id="card-explain" type="button">Que el guía lo explique</button>
+      </div>
+    </section>
+
+    <!-- Hablar con el guía -->
+    <section class="sheet talk-sheet ui" id="talk" hidden aria-labelledby="talk-state">
+      <div class="grab"></div>
+      <div class="talk-top"><button class="lis" id="talk-state" type="button"><span class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span id="talk-label">Te escucho</span></button><button class="x2" id="talk-x" type="button" aria-label="Cerrar"><svg viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button></div>
+      <p class="you dim" id="you">Pregúntale lo que quieras sobre la oficina.</p>
+      <div class="sugg-l">También puedes preguntarle</div>
+      <div class="sugg" id="sugg"></div>
+      <form class="ask" id="ask-form"><input id="ask-input" type="text" placeholder="O escribe tu pregunta" autocomplete="off" enterkeyhint="send"><button type="submit" aria-label="Enviar"><svg viewBox="0 0 24 24"><path d="M5 12h14M13.5 6.5 19 12l-5.5 5.5"/></svg></button></form>
+    </section>
+
+    <!-- Colocar una zona a mano (si el móvil no reconoce los vinilos) -->
+    <section class="sheet ui" id="place" hidden aria-labelledby="place-title">
+      <div class="adj-top"><h2 id="place-title">Colocar una zona</h2><button class="x2" id="place-x" type="button" aria-label="Cerrar"><svg viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button></div>
+      <p class="adj-help">Si el guía no reconoce un vinilo, colócalo tú: ponte justo delante de él, apunta el círculo al suelo, pegado a la pared debajo del vinilo, y toca «Aquí».</p>
+      <div class="zone-list" id="zone-list"></div>
+    </section>
+
+    <div class="toast" id="toast" hidden role="status"></div>
+    <div class="debug" id="debug" hidden></div>
+  </div>
+
+  <!-- Portada -->
+  <main class="start" id="start">
+    <div class="start-in">
+      <span class="seal big" aria-hidden="true"><img src="../assets/emblema.svg" alt=""></span>
+      <div class="over">OptimaGuía · RA con seguimiento espacial</div>
+      <h1>El guía camina contigo por la oficina</h1>
+      <p id="start-lead">El guía aparece en el suelo, a tu lado, y te sigue mientras andas. Apunta a un vinilo para que aparezcan los puntos de esa zona; toca uno y el guía se pondrá delante de ti para explicártelo.</p>
+      <div class="start-thumbs" id="start-thumbs"></div>
+      <ul class="tips">
+        <li>Sube el volumen: el guía habla.</li>
+        <li>Al empezar, mueve el móvil despacio apuntando al suelo hasta que aparezca el guía.</li>
+        <li id="tip-ios" hidden>En iPhone se abre en Needle Go, una mini app de Apple (App Clip) que da la RA con seguimiento espacial. No hay que instalar nada.</li>
+      </ul>
+      <button class="btn primary wide" id="btn-start" type="button" disabled>Cargando el guía…</button>
+      <a class="btn primary wide" id="btn-appclip" hidden>Abrir en RA</a>
+      <a class="link" id="link-sim" href="?sim">Ver una simulación en el ordenador</a>
+      <a class="link" href="../">Volver a la versión de vinilos</a>
+      <p class="status" id="start-status" role="status"></p>
+    </div>
+  </main>
+
+  <script type="module" src="xr.js"></script>
+</body>
+</html>

@@ -80,24 +80,6 @@
     <div class="seg" id="adj-what"></div>
     <div id="adj-sliders"></div>
     <div class="adj-btns"><button class="btn second" id="adj-reset" type="button">Restablecer</button><button class="btn primary" id="adj-copy" type="button">Copiar ajustes</button></div>
-    <button class="link" id="btn-keys-2" type="button">Voz e IA</button>
-  </section>
-
-  <!-- Voz e IA: las claves se pegan aquí y se guardan solo en este móvil -->
-  <section class="sheet keys" id="keys" hidden aria-labelledby="keys-title">
-    <div class="adj-top"><h2 id="keys-title">Voz e IA</h2><button class="x2" id="keys-x" type="button" aria-label="Cerrar"><svg viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button></div>
-    <p class="adj-help">Las claves se guardan solo en este móvil. No las pegues en el chat ni en el código: esta página es pública. Sin claves, el guía usa la voz del móvil y respuestas preparadas.</p>
-    <form id="keys-form" autocomplete="off">
-      <label class="fl" for="k-anthropic">Clave de Claude<small>Para responder en tiempo real lo que le preguntes</small></label>
-      <input class="tf" id="k-anthropic" type="password" placeholder="sk-ant-…" autocomplete="off" autocapitalize="off" spellcheck="false">
-      <label class="fl" for="k-eleven">Clave de ElevenLabs<small>Para la voz del guía</small></label>
-      <input class="tf" id="k-eleven" type="password" placeholder="sk_…" autocomplete="off" autocapitalize="off" spellcheck="false">
-      <label class="fl" for="k-voice">Voz de ElevenLabs<small>Por defecto, «Nico» (guía de museo)</small></label>
-      <input class="tf" id="k-voice" type="text" autocomplete="off" autocapitalize="off" spellcheck="false">
-      <p class="kst" id="keys-status"></p>
-      <div class="adj-btns"><button class="btn second" id="keys-test" type="button">Probar voz</button><button class="btn primary" type="submit">Guardar</button></div>
-      <button class="link danger" id="keys-clear" type="button">Borrar las claves de este móvil</button>
-    </form>
   </section>
 
   <!-- Portada -->
@@ -113,7 +95,8 @@
         <li>Ponte a unos 2 o 3 metros del vinilo, con buena luz.</li>
       </ul>
       <button class="btn primary wide" id="btn-start" type="button">Empezar</button>
-      <button class="link" id="btn-keys" type="button">Voz e IA<span id="start-keys-status"></span></button>
+      <p class="status" id="start-keys-status"></p>
+      <a class="link" href="xr/">Probar la versión con seguimiento espacial</a>
       <p class="status" id="start-status" role="status"></p>
     </div>
   </main>
