@@ -447,6 +447,8 @@ async function goExplain(b, text, markSeen) {
   voz.prefetch(text);
   const B = beaconWorld(b, V());
   const spot = explainSpot(B);
+  const wall = _c.subVectors(spot, b.zone.c).dot(b.zone.n); // separación de la pared del vinilo
+  if (wall < 0.55) spot.addScaledVector(b.zone.n, 0.55 - wall);
   const far = hdist(G.pos, spot);
   if (far > 0.4) {
     const ok = await walkTo(pathAround(G.pos, spot, U.floor), far > 3 ? 1.0 : WALK);
