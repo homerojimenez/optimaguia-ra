@@ -5,8 +5,12 @@
 #overlay .ui, #overlay .mk { pointer-events: auto; }
 #gl { position: fixed; inset: 0; }
 #gl canvas { display: block; touch-action: none; }
-body.in-xr { background: transparent; }
-body.in-xr #gl { display: none; }
+/* Durante la RA todo es transparente. En Needle Go la cámara del iPhone está DETRÁS de la página
+   y el 3D se pinta en el propio canvas: si el fondo es opaco o el canvas se oculta, se ve negro. */
+html.in-xr, html.in-xr body { background: transparent !important; }
+/* color-scheme: dark hace que el navegador pinte de gris oscuro la base de la página aunque el fondo sea transparente */
+html.in-xr { color-scheme: normal; }
+html.in-xr #gl { background: transparent; }
 
 /* La barra superior lleva dos botones */
 .topbar .ib + .ib { margin-left: 2px; }

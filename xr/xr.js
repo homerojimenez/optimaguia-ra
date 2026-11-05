@@ -17,6 +17,7 @@ const SIM = qs.has('sim');
 const DEBUG = qs.has('debug');
 const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 const APPCLIP = `https://appclip.needle.tools/ar?url=${encodeURIComponent(location.href.split('#')[0])}`;
+const IN_APPCLIP = !!(window.__og && window.__og.appclip); // dentro del App Clip Needle Go
 
 const WALK = 0.67;              // m/s a los que está hecho el ciclo Walk
 const EYE = 1.45;               // altura típica del móvil, mientras no se ve el suelo
@@ -34,6 +35,13 @@ const fwdOf = (yaw, out = V()) => out.set(Math.sin(yaw), 0, Math.cos(yaw));
 const rightOf = (dir, out = V()) => out.set(-dir.z, 0, dir.x); // la derecha de quien mira hacia dir
 function toast(msg, ms = 3200) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => { t.hidden = true; }, ms); }
 function noXRSelect(el) { el.addEventListener('beforexrselect', (e) => e.preventDefault()); }
+// iOS solo deja sonar audio después de un toque. Si la RA la arranca Needle Go sin toque, se pide uno antes de que hable el guía.
+let audioOK = false;
+function unlockOnce() { if (audioOK) return; voz.unlockAudio(); audioOK = true; }
+for (const ev of ['touchend', 'click']) document.addEventListener(ev, () => { if (!audioOK && xr.session) { unlockOnce(); renderChip(); } }, true);
+// Un toque en un botón no debe contar además como toque en la escena (Needle Go no siempre respeta beforexrselect)
+let lastUiTouch = 0;
+document.addEventListener('pointerdown', (e) => { if (e.target.closest && e.target.closest('.ui, .mk')) lastUiTouch = performance.now(); }, true);
 
 // ---------------------------------------------------------------------------
 // three.js
@@ -367,7 +375,7 @@ function followTick(dt) {
   }
 }
 function maybeSpawn() {
-  if (G.placed || !G.root || floorY === null) return;
+  if (G.placed || !G.root || floorY === null || !audioOK) return;
   G.pos.copy(U.floor).addScaledVector(U.fwd, 2.6).addScaledVector(rightOf(U.fwd, _a), 0.3);
   G.yaw = Math.atan2(U.pos.x - G.pos.x, U.pos.z - G.pos.z);
   G.root.position.copy(G.pos); G.root.rotation.y = G.yaw;
@@ -622,6 +630,8 @@ function renderChip() {
     btns = true;
   } else if (sheet || !$('#bubble').hidden) {
     t = '';
+  } else if (!audioOK && xr.session) {
+    t = 'Toca la pantalla para empezar'; s = 'Así el guía podrá hablarte.';
   } else if (floorY === null || !G.placed) {
     t = 'Buscando el suelo'; s = 'Mueve el móvil despacio, apuntando al suelo, hasta que aparezca el guía.';
   } else if (!zones.some((z) => z.placed)) {
@@ -701,33 +711,60 @@ function tapRay(o, d) {
   if (hits.length) explain(hits[0].object.userData.b);
 }
 function onSelect(e) {
-  if (placing) return;
+  if (placing || performance.now() - lastUiTouch < 450) return;
   const pose = e.frame.getPose(e.inputSource.targetRaySpace, renderer.xr.getReferenceSpace());
   if (!pose) return;
   _m.fromArray(pose.transform.matrix);
   tapRay(V().setFromMatrixPosition(_m), V(0, 0, -1).transformDirection(_m));
 }
-async function startXR() {
+let starting = false;
+// granted = la sesión la ha concedido Needle Go al abrir la página (sin toque del visitante)
+async function startXR({ granted = false } = {}) {
+  if (starting || xr.session) return;
+  starting = true;
   const st = $('#start-status');
-  voz.unlockAudio();
-  const opts = { requiredFeatures: ['hit-test'], optionalFeatures: ['dom-overlay', 'image-tracking', 'plane-detection'], domOverlay: { root: $('#overlay') } };
-  if (bitmaps) opts.trackedImages = bitmaps.map((image, i) => ({ image, widthInMeters: ZONES[i].vinyl.widthM }));
+  if (!granted) unlockOnce();
+  st.className = 'status'; st.textContent = 'Abriendo la cámara…';
+  // Todo opcional, como hace Needle: si se exige algo que el navegador no tiene, la sesión no arranca
+  const opts = { optionalFeatures: ['hit-test', 'dom-overlay', 'image-tracking', 'plane-detection', 'local-floor'], domOverlay: { root: $('#overlay') } };
+  if (granted && !bitmaps) await Promise.race([bitmapsReady, wait(2500)]);
+  if (bitmaps) { opts.trackedImages = trackedList(); xr.imgBase = 0; }
   let session;
   try { session = await navigator.xr.requestSession('immersive-ar', opts); }
   catch (e) {
     console.warn(e);
-    try { session = await navigator.xr.requestSession('immersive-ar', { optionalFeatures: ['hit-test', 'dom-overlay'], domOverlay: opts.domOverlay }); }
-    catch (e2) { console.error(e2); st.className = 'status err'; st.textContent = 'No se ha podido abrir la RA. Comprueba el permiso de la cámara y vuelve a intentarlo.'; return; }
+    try { session = await navigator.xr.requestSession('immersive-ar', { optionalFeatures: ['hit-test', 'dom-overlay'], domOverlay: opts.domOverlay }); xr.imgBase = null; }
+    catch (e2) {
+      console.error(e2); starting = false;
+      st.className = 'status err'; st.textContent = 'No se ha podido abrir la RA. Comprueba el permiso de la cámara y vuelve a intentarlo.';
+      $('#btn-start').disabled = false; $('#btn-start').textContent = 'Empezar';
+      return;
+    }
   }
-  xr.session = session;
-  $('#overlay').hidden = false; $('#start').hidden = true; document.body.classList.add('in-xr');
+  xr.session = session; starting = false;
+  document.documentElement.classList.add('in-xr');
+  $('#overlay').hidden = false; $('#start').hidden = true;
   session.addEventListener('end', () => location.reload());
   session.addEventListener('select', onSelect);
   await renderer.xr.setSession(session);
+  // Needle Go pinta la RA a través del propio canvas: su tamaño en píxeles es la resolución de la RA
+  if (IN_APPCLIP) requestAnimationFrame(() => {
+    const dpr = Math.min(2, devicePixelRatio || 1); const c = renderer.domElement;
+    c.width = Math.floor(innerWidth * dpr); c.height = Math.floor(innerHeight * dpr);
+    c.style.width = '100vw'; c.style.height = '100vh';
+  });
+  // Si la sesión se abrió antes de tener los vinilos, Needle Go deja añadirlos en marcha
+  if (xr.imgBase === undefined || xr.imgBase === null) {
+    bitmapsReady.then(() => {
+      if (!bitmaps || xr.session !== session) return;
+      const reg = session.nonStandard_registerTrackedImages;
+      if (typeof reg === 'function') { const base = reg.call(session, trackedList()); if (base >= 0) xr.imgBase = base; }
+    }).catch(() => {});
+  }
   try { const viewer = await session.requestReferenceSpace('viewer'); xr.hit = await session.requestHitTestSource({ space: viewer }); }
   catch (e) { console.warn('hit-test', e); xr.hit = null; toast('Este navegador no detecta el suelo. El guía aparecerá a una altura aproximada.', 4500); }
-  xr.dom = !!session.domOverlayState;
-  if (typeof session.getTrackedImageScores === 'function') {
+  xr.dom = !!session.domOverlayState || IN_APPCLIP; // en el App Clip la página entera se ve sobre la cámara
+  if (typeof session.getTrackedImageScores === 'function' && xr.imgBase === 0) {
     session.getTrackedImageScores().then((s) => {
       xr.scores = s;
       const bad = s.map((x, i) => (x === 'untrackable' ? ZONES[i].vinyl.label : null)).filter(Boolean);
@@ -737,6 +774,7 @@ async function startXR() {
   setTimeout(() => { if (floorY === null && !xr.hit) addFloorSample(U.pos.y - EYE); }, 4000);
   started();
 }
+const trackedList = () => bitmaps.map((image, i) => ({ image, widthInMeters: ZONES[i].vinyl.widthM }));
 function xrFrame(frame) {
   const ref = renderer.xr.getReferenceSpace();
   reticleOK = false;
@@ -757,10 +795,11 @@ function xrFrame(frame) {
   if (typeof frame.getImageTrackingResults === 'function') {
     xr.imageAPI = true;
     for (const r of frame.getImageTrackingResults()) {
-      xr.imgStates[r.index] = r.trackingState;
+      const i = r.index - (xr.imgBase || 0);
+      xr.imgStates[i] = r.trackingState;
       if (r.trackingState !== 'tracked') continue;
       const pose = frame.getPose(r.imageSpace, ref);
-      if (pose && zones[r.index]) onImageMatrix(zones[r.index], pose.transform.matrix);
+      if (pose && zones[i]) onImageMatrix(zones[i], pose.transform.matrix);
     }
   } else if (xr.imageAPI === null) {
     xr.imageAPI = false;
@@ -842,7 +881,7 @@ function simFrame(dt) {
   }
 }
 function startSim() {
-  voz.unlockAudio();
+  unlockOnce();
   buildSimRoom();
   camera.position.set(0.3, EYE, 2.6); sim.yaw = 0; sim.pitch = -0.32;
   simControls(0);
@@ -877,7 +916,7 @@ function loop(t, frame) {
     const fps = Math.round(frames / dbgT); frames = 0; dbgT = 0;
     $('#debug').hidden = false;
     $('#debug').textContent = [
-      `${fps} fps · suelo ${floorY === null ? '—' : floorY.toFixed(2)} · capa DOM ${xr.dom ? 'sí' : 'no'} · imágenes ${xr.imageAPI === null ? '?' : xr.imageAPI ? 'sí' : 'no'} ${xr.imgStates.join(',')}`,
+      `${IN_APPCLIP ? 'Needle Go · ' : ''}${fps} fps · suelo ${floorY === null ? '—' : floorY.toFixed(2)} · capa DOM ${xr.dom ? 'sí' : 'no'} · imágenes ${xr.imageAPI === null ? '?' : xr.imageAPI ? 'sí' : 'no'} ${xr.imgStates.join(',')}`,
       `zonas ${zones.map((z) => `${z.id}:${z.source || '-'}`).join(' ')}`,
       `guía ${G.placed ? `${G.gesture} v=${G.speed.toFixed(2)} a ${hdist(G.pos, U.floor).toFixed(1)} m${G.busy ? ' ocupado' : ''}${G.following ? ' siguiendo' : ''}` : 'sin colocar'} · voz ${voz.hasServer() ? 'servidor' : 'móvil'}${voz.lastError ? ' (error)' : ''}`,
     ].join('\n');
@@ -902,11 +941,22 @@ $('#start-thumbs').innerHTML = ZONES.map((z) => `<figure><img src="${z.vinyl.img
     await modelReady; btn.disabled = false; btn.textContent = 'Empezar la simulación'; btn.onclick = startSim;
     return;
   }
+  if (IN_APPCLIP) {
+    $('#link-sim').hidden = true;
+    btn.textContent = 'Abriendo la cámara…';
+    const go = () => startXR({ granted: true });
+    if (window.__og.granted) go(); else document.addEventListener('og-granted', go, { once: true });
+    // Si Needle Go no concede la sesión por su cuenta, se arranca con un toque
+    setTimeout(() => { if (!xr.session && !starting) { btn.disabled = false; btn.textContent = 'Empezar'; btn.onclick = () => startXR(); } }, 4000);
+    return;
+  }
   const xrOK = !!navigator.xr && await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
   if (xrOK) {
     $('#link-sim').hidden = true;
+    if (window.__og && window.__og.granted) { startXR({ granted: true }); return; }
+    document.addEventListener('og-granted', () => startXR({ granted: true }), { once: true });
     await Promise.all([modelReady, bitmapsReady]);
-    btn.disabled = false; btn.textContent = 'Empezar'; btn.onclick = startXR;
+    btn.disabled = false; btn.textContent = 'Empezar'; btn.onclick = () => startXR();
   } else if (IOS) {
     btn.hidden = true; $('#link-sim').hidden = true; $('#tip-ios').hidden = false;
     const a = $('#btn-appclip'); a.hidden = false; a.href = APPCLIP;

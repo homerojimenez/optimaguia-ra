@@ -9,6 +9,20 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;700;800&display=swap">
 <link rel="stylesheet" href="../style.css">
 <link rel="stylesheet" href="xr.css">
+<script>
+  // Needle Go (App Clip de iOS) concede la sesión de RA nada más abrir la página y espera que la página la arranque sola.
+  // Hay que escuchar ese aviso ya, antes de cargar nada, o se pierde y la pantalla se queda en negro.
+  window.__og = { granted: false, appclip: /NeedleAppClip\//i.test(navigator.userAgent) };
+  if (window.__og.appclip) document.documentElement.classList.add('appclip');
+  try {
+    if (navigator.xr && navigator.xr.addEventListener) {
+      navigator.xr.addEventListener('sessiongranted', function () {
+        window.__og.granted = true;
+        document.dispatchEvent(new Event('og-granted'));
+      }, { once: true });
+    }
+  } catch (e) { /* algunos navegadores con WebXR antiguo fallan aquí */ }
+</script>
 <script type="importmap">
 { "imports": {
   "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
