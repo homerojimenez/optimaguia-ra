@@ -14,7 +14,6 @@ import { ZONES, INTRO, OUTRO, QA, SUGG, FALLBACK } from './contenido.js';
 const $ = (s) => document.querySelector(s);
 const qs = new URLSearchParams(location.search);
 const SIM = qs.has('sim');
-const DEBUG = qs.has('debug');
 const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 const APPCLIP = `https://appclip.needle.tools/ar?url=${encodeURIComponent(location.href.split('#')[0])}`;
 const IN_APPCLIP = !!(window.__og && window.__og.appclip); // dentro del App Clip Needle Go
@@ -23,7 +22,7 @@ const WALK = 0.67;              // m/s a los que está hecho el ciclo Walk
 const EYE = 1.45;               // altura típica del móvil, mientras no se ve el suelo
 // En vertical, la cámara del móvil abarca unos 30° de ancho: a 2,8 m el guía se ve entero y cabe desplazado a un lado
 const AHEAD = 2.8, SIDE = 0.45;  // dónde se pone el guía cuando te acompaña: delante y un poco a un lado
-const ONCE = ['Greet', 'Point', 'PointLeft', 'Beckon', 'PresentL', 'PresentR'];
+const ONCE = ['Greet', 'Point', 'PointLeft', 'Beckon', 'PresentL', 'PresentR', 'WalkStart', 'WalkStop', 'StepBack', 'TurnL90', 'TurnR90', 'Turn180'];
 const UP = new THREE.Vector3(0, 1, 0);
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const clamp = THREE.MathUtils.clamp;
@@ -104,7 +103,15 @@ const _q = new THREE.Quaternion(), _a = V(), _b = V(), _c = V();
 function updateUser() {
   camera.getWorldPosition(U.pos);
   const f = _a.set(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(_q)); f.y = 0;
-  if (f.lengthSq() > 0.02) { f.normalize(); U.fwd.lerp(f, 0.2); if (U.fwd.lengthSq() < 1e-4) U.fwd.copy(f); U.fwd.normalize(); }
+  // Se suaviza el ángulo y no el vector: interpolar vectores opuestos (media vuelta) se queda atascado en cero
+  if (f.lengthSq() > 0.02) {
+    const fy = Math.atan2(f.x, f.z);
+    if (U.fyaw === undefined) U.fyaw = fy;
+    const step = angleDiff(U.fyaw, fy) * 0.2; U.fyaw += step;
+    U.fwd.set(Math.sin(U.fyaw), 0, Math.cos(U.fyaw));
+    // cuánto tiempo lleva el visitante mirando en la misma dirección (para no salir detrás de un giro a medias)
+    U.steady = Math.abs(step) < 0.012 ? (U.steady || 0) + 1 / 60 : 0;
+  }
   U.floor.set(U.pos.x, floorY ?? U.pos.y - EYE, U.pos.z);
 }
 
@@ -230,24 +237,43 @@ function setPointed(b) { pointed = b; for (const x of beacons) x.el.classList.to
 // ---------------------------------------------------------------------------
 // El guía
 // ---------------------------------------------------------------------------
+// El modelo mide 1,85 m. Homero lo quiere un poco más bajo: se escala y, con él, la zancada,
+// para que los pies no patinen (Walk está hecho a 0,67 m/s con la altura original).
+const GUIDE_H = 1.72, S = GUIDE_H / 1.85;
+const WALK_V = WALK * S;
+const smooth = (u) => u * u * (3 - 2 * u);
+// Clips que mueven al guía. La app desplaza o gira el objeto con estas curvas y el clip planta los pies
+// (contrato en guia-3d/README.md). d en metros a la altura original, yaw en radianes (+ = a su izquierda).
+const MOTION = {
+  WalkStart: (u) => ({ d: 0.20 * u * u, yaw: 0 }),
+  WalkStop: (u) => ({ d: 0.20 * (2 * u - u * u), yaw: 0 }),
+  StepBack: (u) => ({ d: -0.40 * smooth(u), yaw: 0 }),
+  TurnL90: (u) => ({ d: 0, yaw: (Math.PI / 2) * smooth(u) }),
+  TurnR90: (u) => ({ d: 0, yaw: (-Math.PI / 2) * smooth(u) }),
+  Turn180: (u) => ({ d: 0, yaw: Math.PI * smooth(u) }),
+};
+const BIG_TURN = 1.05; // a partir de unos 60°, gira con pasos (TurnL90 / TurnR90 / Turn180)
+
 const G = {
   root: null, mixer: null, acts: {}, W: {}, gesture: 'Idle',
-  pos: V(), yaw: 0, speed: 0, maxSpeed: WALK, yawVel: 0, turning: false,
+  pos: V(), yaw: 0, speed: 0, speedMul: 1, stride: 1, yawVel: 0, turning: false,
+  mode: 'idle', motion: null, walkT: 0, idleT: 0, // mode: 'idle' | 'motion' (clip que mueve) | 'walk'
   path: [], arrive: null, following: false, side: 1, sinceMove: 0, outOfView: 0, holdUntil: 0,
   placed: false, busy: false, run: 0, aim: null, focus: null, speaking: false,
 };
 const has = (n) => !!G.acts[n];
 const talkName = () => { const o = ['Talk', 'Talk2', 'Talk3'].filter(has); return o[Math.floor(Math.random() * o.length)] || 'Idle'; };
 
-const modelReady = new GLTFLoader().loadAsync('../assets/fray-guia.glb?v=2').then((gltf) => {
+const modelReady = new GLTFLoader().loadAsync('../assets/fray-guia.glb?v=3').then((gltf) => {
   const root = new THREE.Group(); root.visible = false; scene.add(root);
-  const model = gltf.scene; model.traverse((o) => { if (o.isMesh) o.frustumCulled = false; }); root.add(model);
-  const sh = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.9), new THREE.MeshBasicMaterial({ map: blobTex, transparent: true, depthWrite: false }));
+  const model = gltf.scene; model.scale.setScalar(S);
+  model.traverse((o) => { if (o.isMesh) o.frustumCulled = false; }); root.add(model);
+  const sh = new THREE.Mesh(new THREE.PlaneGeometry(0.85, 0.85), new THREE.MeshBasicMaterial({ map: blobTex, transparent: true, depthWrite: false }));
   sh.rotation.x = -Math.PI / 2; sh.position.y = 0.004; sh.renderOrder = -1; root.add(sh);
   const mixer = new THREE.AnimationMixer(model);
   for (const clip of gltf.animations) { const a = mixer.clipAction(clip); a.play(); a.setEffectiveWeight(0); G.acts[clip.name] = a; G.W[clip.name] = 0; }
   for (const n of ONCE) if (G.acts[n]) { G.acts[n].setLoop(THREE.LoopOnce, 1); G.acts[n].clampWhenFinished = true; }
-  mixer.addEventListener('finished', (e) => { if (G.acts[G.gesture] === e.action) setGesture(G.speaking ? talkName() : 'Idle'); });
+  mixer.addEventListener('finished', (e) => { if (G.mode === 'idle' && G.acts[G.gesture] === e.action) setGesture(G.speaking ? talkName() : 'Idle'); });
   G.W.Idle = 1; G.acts.Idle.setEffectiveWeight(1);
   Object.assign(G, { root, mixer });
   return gltf;
@@ -260,26 +286,26 @@ function setGesture(name) {
   if (ONCE.includes(name) || G.W[name] < 0.05) a.reset().play();
   G.gesture = name;
 }
-// Mezcla de animaciones: andar según la velocidad; el resto del peso, para el gesto actual.
+// Mezcla: una sola capa activa (el clip de movimiento, Walk o el gesto) y el resto se apaga.
 // Todos los pesos se acercan a su objetivo al mismo ritmo, así siempre suman 1 y el esqueleto no cae a la pose de reposo.
 function blend(dt) {
-  const walkW = clamp(G.speed / 0.3, 0, 1);
-  const stepW = G.speed < 0.08 ? clamp(Math.abs(G.yawVel) / 2.5, 0, 0.6) : 0; // pasitos al girar en el sitio
-  const lw = Math.max(walkW, stepW);
-  const k = Math.min(1, dt * 8);
+  const active = G.mode === 'motion' ? G.motion.name : G.mode === 'walk' ? 'Walk' : G.gesture;
+  const k = Math.min(1, dt * (G.mode === 'idle' ? 7 : 11));
   for (const n in G.acts) {
-    const target = n === 'Walk' ? lw : (n === G.gesture ? 1 - lw : 0);
-    G.W[n] += (target - G.W[n]) * k;
+    G.W[n] += ((n === active ? 1 : 0) - G.W[n]) * k;
     G.acts[n].setEffectiveWeight(G.W[n]);
   }
-  if (G.acts.Walk) G.acts.Walk.setEffectiveTimeScale(G.speed > 0.08 ? clamp(G.speed / WALK, 0.5, 1.8) : 0.7);
+  if (G.acts.Walk) G.acts.Walk.setEffectiveTimeScale(G.speedMul);
 }
 
+// speed: velocidad deseada en m/s a la altura original (WALK es el paso normal); se convierte en ritmo de Walk
 function walkTo(points, speed = WALK, following = false) {
   if (G.arrive) { const r = G.arrive; G.arrive = null; r(false); }
-  G.path = points.map((p) => p.clone()); G.maxSpeed = speed; G.following = following;
+  G.path = points.map((p) => p.clone()); G.following = following;
+  G.speedMul = clamp(speed / WALK, 1, 1.5); G.stride = 1;
   return new Promise((res) => { G.arrive = res; });
 }
+// Al cancelar, si va andando, termina el paso con WalkStop en vez de cortar en seco
 function stopWalking() { G.path = []; G.following = false; if (G.arrive) { const r = G.arrive; G.arrive = null; r(false); } }
 function arrived() { G.following = false; G.sinceMove = 0; const r = G.arrive; G.arrive = null; if (r) r(true); }
 // Si la línea recta pasa por encima del visitante, rodea por su lado
@@ -301,7 +327,7 @@ function desiredYaw() {
   if (G.focus) return toU + 0.3 * angleDiff(toU, Math.atan2(G.focus.x - G.pos.x, G.focus.z - G.pos.z));
   return toU;
 }
-// Señalar con la mano derecha (Point) o con la izquierda (PointLeft, si existe) sin dar la espalda al visitante
+// Señalar con la mano derecha (Point) o con la izquierda (PointLeft) sin dar la espalda al visitante
 function choosePoint(B) {
   const dx = B.x - G.pos.x, dz = B.z - G.pos.z;
   const toU = V(U.pos.x - G.pos.x, 0, U.pos.z - G.pos.z).normalize();
@@ -312,8 +338,7 @@ function choosePoint(B) {
   for (const o of opts) { const d = fwdOf(o.yaw, _a).dot(toU); if (d > bd) { bd = d; best = o; } }
   return best;
 }
-
-// Presentar con la mano abierta (PresentR / PresentL, si existen): de cara al visitante, con un leve giro hacia el punto
+// Presentar con la mano abierta (PresentR / PresentL): de cara al visitante, con un leve giro hacia el punto
 function choosePresent(B) {
   if (!has('PresentR') && !has('PresentL')) return null;
   const toU = Math.atan2(U.pos.x - G.pos.x, U.pos.z - G.pos.z);
@@ -324,28 +349,88 @@ function choosePresent(B) {
   return { gesture: g, yaw: toU + 0.25 * angleDiff(toU, toB) };
 }
 
+// --- Clips que mueven (giros, arranque, parada, paso atrás) ---
+function playMotion(name, then) {
+  const a = G.acts[name]; a.reset().play();
+  G.mode = 'motion';
+  G.motion = { name, a, dur: a.getClip().duration, pos0: G.pos.clone(), yaw0: G.yaw, then };
+}
+function motionTick() {
+  const M = G.motion;
+  const u = clamp(M.a.time / M.dur, 0, 1);
+  const m = MOTION[M.name](u);
+  G.yaw = M.yaw0 + m.yaw;
+  G.pos.copy(M.pos0).addScaledVector(fwdOf(M.yaw0, _b), m.d * S);
+  if (u >= 1 || !M.a.isRunning()) { G.motion = null; G.mode = 'idle'; if (M.then) M.then(); }
+}
+// Girar hacia diff: con pasos si es mucho; si no, un giro suave en el sitio
+function turnToward(diff, dt, rate) {
+  if (Math.abs(diff) >= BIG_TURN) {
+    const name = Math.abs(diff) > 2.2 ? 'Turn180' : diff > 0 ? 'TurnL90' : 'TurnR90';
+    if (has(name)) { G.turning = true; playMotion(name, () => { G.turning = false; }); return; }
+  }
+  turn(diff, dt, rate);
+}
+function startWalking() {
+  G.mode = 'walk'; G.stride = 1;
+  const w = G.acts.Walk; w.reset().play(); w.time = 0; G.walkT = 0; // WalkStart acaba justo en el fotograma 0 de Walk
+}
+// Parado con un camino pendiente: primero se orienta y después arranca
+function departTick(dt) {
+  const tgt = G.path[0];
+  const to = _a.subVectors(tgt, G.pos); to.y = 0;
+  const d = to.length();
+  if (G.path.length === 1 && d < 0.3) { G.path = []; arrived(); return; }
+  if (G.path.length > 1 && d < 0.45) { G.path.shift(); return; }
+  const diff = angleDiff(G.yaw, Math.atan2(to.x, to.z));
+  if (Math.abs(diff) > 0.3) { turnToward(diff, dt, 2.2); return; }
+  if (has('WalkStart')) playMotion('WalkStart', startWalking); else startWalking();
+}
+// Andando: corrige el rumbo y, cuando Walk pasa por su fotograma 0 (pie izquierdo delante), decide si para con WalkStop.
+// La zancada se ajusta un poco (±20 %) para que la parada caiga en el sitio.
+function walkTick(dt) {
+  const w = G.acts.Walk; const T = w.getClip().duration;
+  const t = w.time % T; const wrapped = t < G.walkT; G.walkT = t;
+  const cycle = WALK_V * T; const stopD = 0.20 * S;
+  let d = 0, diff = 0;
+  if (G.path.length) {
+    const to = _a.subVectors(G.path[0], G.pos); to.y = 0; d = to.length();
+    if (G.path.length > 1 && d < 0.45) { G.path.shift(); return; }
+    diff = angleDiff(G.yaw, Math.atan2(to.x, to.z));
+    turn(diff, dt, 1.8);
+  }
+  if (wrapped) {
+    const rem = d - stopD;
+    const last = G.path.length <= 1;
+    if (!G.path.length || (last && rem < cycle * 0.5) || Math.abs(diff) > 1.9) {
+      if (has('WalkStop')) { playMotion('WalkStop', afterStop); return; }
+      G.mode = 'idle'; afterStop(); return;
+    }
+    if (last && rem < cycle * 2.5) { const n = Math.max(1, Math.round(rem / cycle)); G.stride = clamp(rem / (n * cycle), 0.8, 1.2); } else G.stride = 1;
+  }
+  G.pos.addScaledVector(fwdOf(G.yaw, _b), WALK_V * G.speedMul * G.stride * dt);
+}
+function afterStop() {
+  if (G.path.length && hdist(G.pos, G.path[G.path.length - 1]) > 0.45) return; // le faltaba: vuelve a orientarse y arranca
+  G.path = []; arrived();
+}
+
 function updateGuide(dt) {
   if (!G.placed) return;
   G.yawVel = 0;
-  if (G.path.length) {
-    const tgt = G.path[0];
-    const to = _a.subVectors(tgt, G.pos); to.y = 0;
-    const d = to.length(); const last = G.path.length === 1;
-    if (d < (last ? 0.12 : 0.35)) { G.path.shift(); if (!G.path.length) arrived(); }
-    else {
-      const diff = angleDiff(G.yaw, Math.atan2(to.x, to.z));
-      turn(diff, dt, 3.2);
-      let v = G.maxSpeed * Math.max(0, Math.cos(diff)) ** 3; // si el destino queda detrás, primero se gira
-      if (last) v = Math.min(v, 0.18 + d * 0.9);               // frena al llegar
-      G.speed += clamp(v - G.speed, -2.2 * dt, 1.3 * dt);
-    }
-  } else G.speed = Math.max(0, G.speed - 2.2 * dt);
-  G.pos.addScaledVector(fwdOf(G.yaw, _b), G.speed * dt);
-  G.pos.y += ((floorY ?? U.pos.y - EYE) - G.pos.y) * Math.min(1, dt * 6);
-  if (!G.path.length && G.speed < 0.15) {
+  const p0x = G.pos.x, p0z = G.pos.z;
+  if (G.mode === 'motion') motionTick();
+  else if (G.mode === 'walk') walkTick(dt);
+  else if (G.path.length) departTick(dt);
+  else {
     const diff = angleDiff(G.yaw, desiredYaw());
-    if (G.turning || Math.abs(diff) > (G.busy ? 0.12 : 0.45)) { G.turning = Math.abs(diff) > 0.05; turn(diff, dt, G.busy ? 2.6 : 1.8); }
-  } else G.turning = false;
+    if (G.turning || Math.abs(diff) > (G.busy ? 0.2 : 0.45)) { G.turning = Math.abs(diff) > 0.05; if (G.mode === 'idle') turnToward(diff, dt, G.busy ? 1.6 : 1.1); }
+    // Variedad cuando espera sin hacer nada: mira alrededor
+    if (!G.busy && !G.speaking) { G.idleT += dt; if (G.idleT > 9 && G.gesture === 'Idle' && has('IdleLook')) setGesture('IdleLook'); }
+  }
+  if (G.busy || G.mode !== 'idle' || G.path.length) { G.idleT = 0; if (G.gesture === 'IdleLook') setGesture('Idle'); }
+  G.speed = Math.hypot(G.pos.x - p0x, G.pos.z - p0z) / Math.max(dt, 1e-3);
+  G.pos.y += ((floorY ?? U.pos.y - EYE) - G.pos.y) * Math.min(1, dt * 6);
   G.root.position.copy(G.pos); G.root.rotation.y = G.yaw;
 }
 function guideInView() {
@@ -362,16 +447,20 @@ function followTick(dt) {
   const desired = V().copy(U.floor).addScaledVector(U.fwd, AHEAD).addScaledVector(r, SIDE * sideNow);
   const dU = hdist(G.pos, U.floor), dD = hdist(G.pos, desired);
   G.outOfView = guideInView() ? 0 : G.outOfView + dt;
-  if (!G.path.length) {
+  if (!G.path.length && G.mode === 'idle') {
     G.sinceMove += dt;
+    // Si te le echas encima y te está mirando, da dos pasos atrás sin darse la vuelta
+    const toU = Math.atan2(U.pos.x - G.pos.x, U.pos.z - G.pos.z);
+    // (si no te está mirando, primero se gira hacia ti y luego retrocede)
+    if (dU < 0.75 && has('StepBack')) { if (Math.abs(angleDiff(G.yaw, toU)) < 0.6) playMotion('StepBack'); return; }
     if (performance.now() < G.holdUntil && dU < 4.4 && dU > 0.8) return;
-    if (dU > 4.2 || dU < 1.0 || (dD > 1.5 && G.sinceMove > 1.5) || (G.outOfView > 2.5 && dD > 0.8)) {
+    if (dU > 4.2 || ((U.steady || 0) > 0.5 && (dU < 1.0 || (dD > 1.5 && G.sinceMove > 1.5) || (G.outOfView > 2.5 && dD > 0.8)))) {
       G.side = sideNow;
-      walkTo(pathAround(G.pos, desired, U.floor), dU > 5 ? 1.15 : WALK, true);
+      walkTo(pathAround(G.pos, desired, U.floor), dU > 5 ? 1.0 : WALK, true);
     }
-  } else if (G.following) {
+  } else if (G.following && G.path.length) {
     G.path[G.path.length - 1].lerp(desired, Math.min(1, dt * 1.5));
-    G.maxSpeed = dU > 5 ? 1.15 : WALK;
+    G.speedMul = dU > 5 ? 1.4 : 1;
   }
 }
 function maybeSpawn() {
@@ -419,7 +508,7 @@ async function sayLine(text, run, first = null) {
 async function waitFacing(run, maxS) {
   const t0 = performance.now();
   while (alive(run) && performance.now() - t0 < maxS * 1000) {
-    if (!G.turning && Math.abs(angleDiff(G.yaw, desiredYaw())) < 0.15) return;
+    if (G.mode === 'idle' && !G.path.length && !G.turning && Math.abs(angleDiff(G.yaw, desiredYaw())) < 0.2) return;
     await wait(50);
   }
 }
@@ -894,7 +983,7 @@ function startSim() {
 // Bucle
 // ---------------------------------------------------------------------------
 const clock = new THREE.Clock();
-let uiT = 0, dbgT = 0, frames = 0;
+let uiT = 0;
 function loop(t, frame) {
   const dt = Math.min(clock.getDelta(), 0.05);
   if (frame) renderer.xr.updateCamera(camera); else if (SIM) simControls(dt);
@@ -907,19 +996,10 @@ function loop(t, frame) {
   reticle.visible = reticleOK && (!!placing || !G.placed);
   renderer.render(scene, camera);
   updateLabels();
-  frames++; uiT += dt; dbgT += dt;
+  uiT += dt;
   if (uiT > 0.25) {
     uiT = 0; renderChip();
     const here = $('#chip-here'); if (here.disabled === reticleOK) here.disabled = !reticleOK;
-  }
-  if (DEBUG && dbgT > 0.5) {
-    const fps = Math.round(frames / dbgT); frames = 0; dbgT = 0;
-    $('#debug').hidden = false;
-    $('#debug').textContent = [
-      `${IN_APPCLIP ? 'Needle Go · ' : ''}${fps} fps · suelo ${floorY === null ? '—' : floorY.toFixed(2)} · capa DOM ${xr.dom ? 'sí' : 'no'} · imágenes ${xr.imageAPI === null ? '?' : xr.imageAPI ? 'sí' : 'no'} ${xr.imgStates.join(',')}`,
-      `zonas ${zones.map((z) => `${z.id}:${z.source || '-'}`).join(' ')}`,
-      `guía ${G.placed ? `${G.gesture} v=${G.speed.toFixed(2)} a ${hdist(G.pos, U.floor).toFixed(1)} m${G.busy ? ' ocupado' : ''}${G.following ? ' siguiendo' : ''}` : 'sin colocar'} · voz ${voz.hasServer() ? 'servidor' : 'móvil'}${voz.lastError ? ' (error)' : ''}`,
-    ].join('\n');
   }
 }
 function started() {
@@ -973,7 +1053,7 @@ if (SIM) {
     setCam(x, z, yawDeg, pitchDeg = -15) { camera.position.set(x, EYE, z); sim.yaw = THREE.MathUtils.degToRad(yawDeg); sim.pitch = THREE.MathUtils.degToRad(pitchDeg); },
     tap(id) { explain(beacons.find((b) => b.id === id)); },
     state: () => ({
-      floorY, guide: { placed: G.placed, x: +G.pos.x.toFixed(2), z: +G.pos.z.toFixed(2), yaw: +G.yaw.toFixed(2), gesture: G.gesture, speed: +G.speed.toFixed(2), busy: G.busy, following: G.following, dUser: +hdist(G.pos, U.floor).toFixed(2), inView: guideInView() },
+      floorY, guide: { mode: G.mode === 'motion' ? G.motion.name : G.mode, placed: G.placed, x: +G.pos.x.toFixed(2), z: +G.pos.z.toFixed(2), yaw: +G.yaw.toFixed(2), gesture: G.gesture, speed: +G.speed.toFixed(2), busy: G.busy, following: G.following, dUser: +hdist(G.pos, U.floor).toFixed(2), inView: guideInView() },
       user: { x: +U.pos.x.toFixed(2), z: +U.pos.z.toFixed(2) },
       zones: zones.map((z) => `${z.id}:${z.source || '-'}`), seen: beacons.filter((b) => b.seen).map((b) => b.id),
       bubble: $('#bubble').hidden ? '' : $('#line').textContent, chip: $('#chip').hidden ? '' : $('#chip-t').textContent,

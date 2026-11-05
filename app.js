@@ -8,7 +8,6 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import * as voz from './voz.js';
 
 const $ = (s) => document.querySelector(s);
-const DEBUG = new URLSearchParams(location.search).has('debug');
 
 // ---------------------------------------------------------------------------
 // Escenas. Posiciones en metros respecto al centro de cada vinilo, mirando a la pared:
@@ -133,7 +132,7 @@ let lastSeen = null;   // última escena vista (para «Ajustar»)
 const camWorld = new THREE.Vector3();
 const tmp = new THREE.Vector3();
 
-const modelReady = new GLTFLoader().loadAsync('assets/fray-guia.glb?v=2').then((g) => { gltf = g; return g; });
+const modelReady = new GLTFLoader().loadAsync('assets/fray-guia.glb?v=3').then((g) => { gltf = g; return g; });
 
 function shadowMesh() {
   const c = document.createElement('canvas'); c.width = c.height = 128;
@@ -172,10 +171,11 @@ function buildAnchor(sc) {
   layout(A); play(A, 'Idle', 0);
   return A;
 }
+const GUIDE_SCALE = 1.72 / 1.85; // el modelo mide 1,85 m; el guía queda en 1,72 m
 function layout(A) {
   const { sc } = A; const s = 1 / sc.vinyl.widthM;
   const fy = -sc.vinyl.centerM * s;
-  A.holder.scale.setScalar(s);
+  A.holder.scale.setScalar(s * GUIDE_SCALE);
   A.holder.position.set(sc.guide.x * s, fy, sc.guide.z * s);
   A.shadow.scale.setScalar(s);
   A.shadow.position.set(sc.guide.x * s, fy + 0.003 * s, sc.guide.z * s);
@@ -453,15 +453,12 @@ $('#start-keys-status').textContent = voz.hasServer() ? 'Voz de ElevenLabs y res
 // Arranque
 // ---------------------------------------------------------------------------
 $('#start-thumbs').innerHTML = SCENES.map((s) => `<figure><img src="${s.vinyl.img}" alt="Vinilo ${s.vinyl.label}"><figcaption>${s.title}<br>${s.vinyl.where}</figcaption></figure>`).join('');
-let dbg = null;
-if (DEBUG) { dbg = document.createElement('div'); dbg.className = 'debug'; document.body.appendChild(dbg); }
 
 function tick() {
   const dt = Math.min(clock.getDelta(), 0.05);
   for (const A of anchors) if (A.visible) { A.mixer.update(dt); updateYaw(A, dt); }
   renderer.render(scene3, camera);
   updateMarks();
-  if (dbg) dbg.textContent = `${Math.round(1 / Math.max(dt, 0.001))} fps · ${active ? active.sc.id : 'sin vinilo'} · línea ${active ? active.lineIdx : '-'}`;
 }
 
 async function start() {

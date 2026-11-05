@@ -56,4 +56,3 @@ html.in-xr #gl { background: transparent; }
 
 /* Sobre la cámara, la barra superior va en franja sólida: las paredes claras se comían el texto */
 #overlay .topbar { background: var(--band); padding-bottom: 12px; }
-#overlay .debug { top: calc(var(--st) + 128px); bottom: auto; right: 8px; white-space: pre-wrap; }
